@@ -33,8 +33,17 @@ app.add_middleware(
 
 # Шаблоны и статика
 BASE_DIR = Path(__file__).parent
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+templates_dir = BASE_DIR / "templates"
+static_dir = BASE_DIR / "static"
+templates_dir.mkdir(exist_ok=True)
+static_dir.mkdir(exist_ok=True)
+templates = Jinja2Templates(directory=str(templates_dir))
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
 
 # Конфигурация
 BOT_TOKEN = os.getenv("ONBOARDING_BOT_TOKEN", "")
