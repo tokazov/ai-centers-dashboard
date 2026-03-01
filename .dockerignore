@@ -3,9 +3,9 @@ __pycache__
 *.pyo
 *.pyd
 .Python
-*.so
 *.db
-*.db-journal
+*.sqlite
+*.sqlite3
 .env
 .venv
 venv/
@@ -13,5 +13,4 @@ ENV/
 .git
 .gitignore
 README.md
-*.md
 .DS_Store
