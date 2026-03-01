@@ -136,9 +136,17 @@ async def init_db():
         await db.commit()
 
 
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
+
 @app.on_event("startup")
 async def startup():
-    await init_db()
+    try:
+        await init_db()
+    except Exception as e:
+        import logging
+        logging.error(f"DB init failed: {e}")
 
 
 # === Auth ===
