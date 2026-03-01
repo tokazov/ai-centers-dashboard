@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Centers - Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Экран авторизации -->
+        <div id="auth-screen" class="screen">
+            <div class="auth-container">
+                <h1>🤖 AI Centers</h1>
+                <p>Панель управления вашим AI-ботом</p>
+                
+                <div id="telegram-login-container">
+                    <script async src="https://telegram.org/js/telegram-widget.js?22"
+                            data-telegram-login="{{ bot_username }}"
+                            data-size="large"
+                            data-onauth="onTelegramAuth(user)"
+                            data-request-access="write">
+                    </script>
+                </div>
+                
+                <p class="auth-note">Войдите через Telegram, чтобы получить доступ к панели</p>
+            </div>
+        </div>
+
+        <!-- Главная панель -->
+        <div id="dashboard-screen" class="screen hidden">
+            <header>
+                <div class="header-left">
+                    <h1>🤖 AI Centers</h1>
+                </div>
+                <div class="header-right">
+                    <span id="user-name">Загрузка...</span>
+                    <button onclick="logout()" class="btn-secondary">Выйти</button>
+                </div>
+            </header>
+
+            <div class="container">
+                <!-- Статистика -->
+                <section class="stats-section">
+                    <h2>📊 Статистика</h2>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value" id="stat-today">-</div>
+                            <div class="stat-label">Сегодня</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="stat-week">-</div>
+                            <div class="stat-label">За неделю</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="stat-month">-</div>
+                            <div class="stat-label">За месяц</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="stat-users">-</div>
+                            <div class="stat-label">Уникальных пользователей</div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Последние диалоги -->
+                <section class="conversations-section">
+                    <h2>💬 Последние диалоги</h2>
+                    <div id="conversations-list" class="conversations-list">
+                        <p class="loading">Загрузка...</p>
+                    </div>
+                </section>
+
+                <!-- Настройки бота -->
+                <section class="settings-section">
+                    <h2>⚙️ Настройки бота</h2>
+                    <form id="config-form">
+                        <div class="form-group">
+                            <label>Название бизнеса</label>
+                            <input type="text" id="business_name" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Расписание работы</label>
+                            <input type="text" id="schedule" placeholder="10:00-20:00, пн-сб">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Адрес</label>
+                            <input type="text" id="address">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Телефон</label>
+                            <input type="text" id="phone">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Услуги и цены</label>
+                            <div id="services-list"></div>
+                            <button type="button" onclick="addService()" class="btn-secondary">+ Добавить услугу</button>
+                        </div>
+
+                        <button type="submit" class="btn-primary">Сохранить изменения</button>
+                    </form>
+                </section>
+
+                <!-- Подписка -->
+                <section class="subscription-section">
+                    <h2>💳 Подписка</h2>
+                    <div id="subscription-info" class="subscription-card">
+                        <p class="loading">Загрузка...</p>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+    <script>
+        // Колбэк авторизации Telegram
+        function onTelegramAuth(user) {
+            authenticateUser(user);
+        }
+    </script>
+</body>
+</html>
