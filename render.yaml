@@ -1,0 +1,21 @@
+# Render.com configuration for AI Centers Dashboard
+
+services:
+  - type: web
+    name: ai-centers-dashboard
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_PATH
+        value: /opt/render/project/src/database/ai_centers.db
+      - key: ONBOARDING_BOT_TOKEN
+        sync: false
+      - key: BOT_USERNAME
+        sync: false
+    disk:
+      name: database
+      mountPath: /opt/render/project/src/database
+      sizeGB: 1

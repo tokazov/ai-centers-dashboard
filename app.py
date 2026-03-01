@@ -175,6 +175,12 @@ async def get_current_user(request: Request) -> Optional[int]:
 
 # === Routes ===
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint для мониторинга"""
+    return {"status": "ok", "service": "ai-centers-dashboard"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Главная страница"""
