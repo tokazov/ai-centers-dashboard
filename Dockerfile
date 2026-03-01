@@ -18,6 +18,6 @@ ENV ONBOARDING_BOT_TOKEN=""
 ENV BOT_USERNAME="ai_centers_bot"
 ENV PORT=8000
 
-EXPOSE 8000
+EXPOSE ${PORT}
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD uvicorn app:app --host 0.0.0.0 --port ${PORT}
