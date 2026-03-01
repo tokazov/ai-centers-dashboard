@@ -48,7 +48,7 @@ async def healthz():
 # Конфигурация
 BOT_TOKEN = os.getenv("ONBOARDING_BOT_TOKEN", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "ai_centers_bot")
-DATABASE_PATH = os.getenv("DATABASE_PATH", "../database/ai_centers.db")
+DATABASE_PATH = os.getenv("DATABASE_PATH", "/app/database/ai_centers.db")
 
 # Telegram Login Widget secret
 TELEGRAM_SECRET = hashlib.sha256(BOT_TOKEN.encode()).digest()
@@ -429,5 +429,8 @@ async def webhook_message(data: Dict):
 
 if __name__ == "__main__":
     import uvicorn
+    import logging
+    logging.basicConfig(level=logging.INFO)
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    logging.info(f"Starting dashboard on port {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
