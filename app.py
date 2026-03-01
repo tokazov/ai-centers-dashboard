@@ -184,6 +184,42 @@ async def init_db():
             )
         """)
         
+        # CRM — лиды и заявки
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS leads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                business TEXT,
+                niche TEXT,
+                contact TEXT,
+                phone TEXT,
+                address TEXT,
+                schedule TEXT,
+                services TEXT,
+                description TEXT,
+                plan TEXT,
+                telegram_id INTEGER,
+                username TEXT,
+                status TEXT DEFAULT 'new',
+                source TEXT DEFAULT 'telegram',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Оплаты
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER,
+                plan TEXT,
+                amount_stars INTEGER,
+                status TEXT DEFAULT 'completed',
+                payload TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
         await db.commit()
 
 
@@ -463,6 +499,80 @@ async def webhook_message(data: Dict):
         await db.commit()
     
     return {"status": "ok"}
+
+
+# === CRM API ===
+
+@app.post("/api/leads")
+async def create_lead(data: Dict):
+    """Создание лида из продажника или сайта"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """INSERT INTO leads (name, business, niche, contact, phone, address, 
+               schedule, services, description, plan, telegram_id, username, source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                data.get("name", ""),
+                data.get("business", ""),
+                data.get("niche", ""),
+                data.get("contact", ""),
+                data.get("phone", ""),
+                data.get("address", ""),
+                data.get("schedule", ""),
+                json.dumps(data.get("services", []), ensure_ascii=False),
+                data.get("description", ""),
+                data.get("plan", ""),
+                data.get("telegram_id", 0),
+                data.get("username", ""),
+                data.get("source", "telegram")
+            )
+        )
+        await db.commit()
+    return {"status": "ok"}
+
+
+@app.get("/api/leads")
+async def get_leads():
+    """Получение всех лидов (для админа)"""
+    owner_id = int(os.getenv("OWNER_CHAT_ID", "5309206282"))
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM leads ORDER BY created_at DESC LIMIT 100"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+@app.post("/api/payments")
+async def record_payment(data: Dict):
+    """Запись оплаты"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """INSERT INTO payments (telegram_id, plan, amount_stars, status, payload)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                data.get("telegram_id", 0),
+                data.get("plan", ""),
+                data.get("amount_stars", 0),
+                data.get("status", "completed"),
+                data.get("payload", "")
+            )
+        )
+        await db.commit()
+    return {"status": "ok"}
+
+
+@app.get("/api/payments")
+async def get_payments():
+    """Получение всех оплат"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM payments ORDER BY created_at DESC LIMIT 100"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 if __name__ == "__main__":
