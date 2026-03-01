@@ -10,6 +10,8 @@ import hmac
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from pathlib import Path
+from collections import defaultdict
+from time import time
 
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.staticfiles import StaticFiles
@@ -22,14 +24,25 @@ import aiosqlite
 
 app = FastAPI(title="AI Centers Dashboard")
 
-# CORS
+# CORS для конкретных доменов
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://aicenters.co",
+        "https://www.aicenters.co",
+        "https://aicenters.netlify.app",
+        "http://localhost:3000",
+        "http://localhost:8000"
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Rate limiting для /api/chat
+rate_limit_store = defaultdict(list)
+RATE_LIMIT_MAX = 30  # запросов
+RATE_LIMIT_WINDOW = 60  # секунд
 
 # Шаблоны и статика
 BASE_DIR = Path(__file__).parent
@@ -51,27 +64,68 @@ import aiohttp
 
 GEMINI_API_KEY_CHAT = os.getenv("GEMINI_API_KEY", "")
 
+def check_rate_limit(ip: str) -> bool:
+    """Проверка rate limit: max 30 запросов в минуту с одного IP"""
+    now = time()
+    # Очищаем старые записи
+    rate_limit_store[ip] = [t for t in rate_limit_store[ip] if now - t < RATE_LIMIT_WINDOW]
+    # Проверяем лимит
+    if len(rate_limit_store[ip]) >= RATE_LIMIT_MAX:
+        return False
+    # Добавляем текущий запрос
+    rate_limit_store[ip].append(now)
+    return True
+
 @app.post("/api/chat")
 async def chat_proxy(request: Request):
-    """Chat API для клиентских виджетов — проксирует Gemini."""
+    """Chat API для клиентских виджетов — проксирует Gemini с rate limiting."""
+    
+    # Rate limiting
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        return JSONResponse(
+            {"error": "too_many_requests", "retry_after": 60},
+            status_code=429
+        )
+    
     try:
         data = await request.json()
         user_message = data.get("message", "")
-        history = data.get("history", [])
+        language = data.get("language", "ru")
         
         if not user_message:
             return JSONResponse({"error": "empty message"}, status_code=400)
         
-        system_prompt = data.get("system_prompt",
-            "You are a helpful AI assistant for a business. "
-            "Answer concisely in the user's language. Be friendly.")
+        if not GEMINI_API_KEY_CHAT:
+            return JSONResponse({"error": "api_key_not_configured"}, status_code=500)
         
-        contents = history[-10:] if history else []
-        contents.append({"role": "user", "parts": [{"text": user_message}]})
+        system_prompt = """You are AI Centers sales assistant on the website aicenters.co.
+Your job: answer questions about AI Centers platform and convert visitors into customers.
+
+About AI Centers:
+- Platform that creates AI bots/assistants for businesses
+- Telegram bots, website chat widgets, voice AI secretaries
+- 10+ niches: restaurants, salons, delivery, hotels, clinics, etc.
+- Pricing: Starter $15/mo, Business $49/mo, Pro $99/mo, Enterprise $149/mo
+- Voice AI Secretary: $299/mo (answers phone calls 24/7)
+- Custom bot development: $499-999 one-time
+
+Key benefits:
+- Works 24/7, never sleeps
+- Speaks 7 languages (RU, EN, GE, TR, KZ, UZ, AR)
+- Answers in 2 seconds
+- Saves 70% on staff costs
+- Free demo available: @aicenters_demo_bot on Telegram
+
+Rules:
+- Be friendly, concise (2-3 sentences)
+- Detect user language automatically and respond in same language
+- Guide to demo bot or contact @aicenters_hub_bot for purchase
+- Don't use markdown, plain text only"""
         
         payload = {
             "system_instruction": {"parts": [{"text": system_prompt}]},
-            "contents": contents,
+            "contents": [{"role": "user", "parts": [{"text": user_message}]}],
             "generationConfig": {"maxOutputTokens": 300, "temperature": 0.7}
         }
         
