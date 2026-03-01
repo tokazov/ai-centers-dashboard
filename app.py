@@ -45,6 +45,48 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 async def healthz():
     return {"status": "ok"}
 
+
+# === Chat API Proxy (for client widgets) ===
+import aiohttp
+
+GEMINI_API_KEY_CHAT = os.getenv("GEMINI_API_KEY", "")
+
+@app.post("/api/chat")
+async def chat_proxy(request: Request):
+    """Chat API для клиентских виджетов — проксирует Gemini."""
+    try:
+        data = await request.json()
+        user_message = data.get("message", "")
+        history = data.get("history", [])
+        
+        if not user_message:
+            return JSONResponse({"error": "empty message"}, status_code=400)
+        
+        system_prompt = data.get("system_prompt",
+            "You are a helpful AI assistant for a business. "
+            "Answer concisely in the user's language. Be friendly.")
+        
+        contents = history[-10:] if history else []
+        contents.append({"role": "user", "parts": [{"text": user_message}]})
+        
+        payload = {
+            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "contents": contents,
+            "generationConfig": {"maxOutputTokens": 300, "temperature": 0.7}
+        }
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY_CHAT}"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                result = await resp.json()
+                reply = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "Sorry, try again.")
+                return JSONResponse({"reply": reply})
+    except Exception as e:
+        import logging
+        logging.error(f"Chat proxy error: {e}")
+        return JSONResponse({"error": "internal error"}, status_code=500)
+
 # Конфигурация
 BOT_TOKEN = os.getenv("ONBOARDING_BOT_TOKEN", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "ai_centers_bot")
@@ -144,10 +186,6 @@ async def init_db():
         
         await db.commit()
 
-
-@app.get("/healthz")
-async def healthz():
-    return {"status": "ok"}
 
 @app.on_event("startup")
 async def startup():
