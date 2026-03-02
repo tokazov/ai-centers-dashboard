@@ -3,125 +3,128 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Centers - Dashboard</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <title>AI Centers — Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; min-height: 100vh; }
+        .header { background: linear-gradient(135deg, #1a1b2e, #2d1f4e); padding: 24px 32px; border-bottom: 1px solid #2a2d3e; }
+        .header h1 { font-size: 24px; color: #fff; }
+        .header span { color: #8b5cf6; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 32px; }
+        .card { background: #1a1b2e; border: 1px solid #2a2d3e; border-radius: 12px; padding: 24px; }
+        .card .label { font-size: 13px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .card .value { font-size: 36px; font-weight: 700; color: #fff; }
+        .card .sub { font-size: 13px; color: #666; margin-top: 4px; }
+        .card.purple .value { color: #8b5cf6; }
+        .card.green .value { color: #22c55e; }
+        .card.blue .value { color: #3b82f6; }
+        .card.orange .value { color: #f59e0b; }
+        .section { background: #1a1b2e; border: 1px solid #2a2d3e; border-radius: 12px; padding: 24px; margin-bottom: 24px; }
+        .section h2 { font-size: 18px; margin-bottom: 16px; color: #fff; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #2a2d3e; font-size: 14px; }
+        th { color: #888; font-weight: 500; text-transform: uppercase; font-size: 12px; letter-spacing: 1px; }
+        td { color: #ccc; }
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+        .badge.new { background: #1e3a5f; color: #60a5fa; }
+        .badge.contacted { background: #1e3a2e; color: #4ade80; }
+        .badge.completed { background: #1e3a2e; color: #22c55e; }
+        .loading { text-align: center; padding: 40px; color: #666; }
+        @media (max-width: 600px) { .container { padding: 12px; } .card .value { font-size: 28px; } }
+    </style>
 </head>
 <body>
-    <div id="app">
-        <!-- Экран авторизации -->
-        <div id="auth-screen" class="screen">
-            <div class="auth-container">
-                <h1>🤖 AI Centers</h1>
-                <p>Панель управления вашим AI-ботом</p>
-                
-                <div id="telegram-login-container">
-                    <script async src="https://telegram.org/js/telegram-widget.js?22"
-                            data-telegram-login="{{ bot_username }}"
-                            data-size="large"
-                            data-onauth="onTelegramAuth(user)"
-                            data-request-access="write">
-                    </script>
-                </div>
-                
-                <p class="auth-note">Войдите через Telegram, чтобы получить доступ к панели</p>
+    <div class="header">
+        <h1><span>AI Centers</span> Dashboard</h1>
+    </div>
+    <div class="container">
+        <div class="cards">
+            <div class="card purple">
+                <div class="label">Лиды</div>
+                <div class="value" id="leads-count">—</div>
+                <div class="sub">Всего заявок</div>
+            </div>
+            <div class="card green">
+                <div class="label">Оплаты</div>
+                <div class="value" id="payments-count">—</div>
+                <div class="sub">Telegram Stars</div>
+            </div>
+            <div class="card blue">
+                <div class="label">Выручка</div>
+                <div class="value" id="revenue">—</div>
+                <div class="sub">⭐ Stars всего</div>
+            </div>
+            <div class="card orange">
+                <div class="label">Боты</div>
+                <div class="value" id="bots-count">6</div>
+                <div class="sub">Демо-ботов активно</div>
             </div>
         </div>
 
-        <!-- Главная панель -->
-        <div id="dashboard-screen" class="screen hidden">
-            <header>
-                <div class="header-left">
-                    <h1>🤖 AI Centers</h1>
-                </div>
-                <div class="header-right">
-                    <span id="user-name">Загрузка...</span>
-                    <button onclick="logout()" class="btn-secondary">Выйти</button>
-                </div>
-            </header>
+        <div class="section">
+            <h2>📋 Последние лиды</h2>
+            <table>
+                <thead><tr><th>Дата</th><th>Имя</th><th>Бизнес</th><th>Ниша</th><th>Контакт</th><th>Статус</th></tr></thead>
+                <tbody id="leads-table"><tr><td colspan="6" class="loading">Загрузка...</td></tr></tbody>
+            </table>
+        </div>
 
-            <div class="container">
-                <!-- Статистика -->
-                <section class="stats-section">
-                    <h2>📊 Статистика</h2>
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <div class="stat-value" id="stat-today">-</div>
-                            <div class="stat-label">Сегодня</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value" id="stat-week">-</div>
-                            <div class="stat-label">За неделю</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value" id="stat-month">-</div>
-                            <div class="stat-label">За месяц</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value" id="stat-users">-</div>
-                            <div class="stat-label">Уникальных пользователей</div>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Последние диалоги -->
-                <section class="conversations-section">
-                    <h2>💬 Последние диалоги</h2>
-                    <div id="conversations-list" class="conversations-list">
-                        <p class="loading">Загрузка...</p>
-                    </div>
-                </section>
-
-                <!-- Настройки бота -->
-                <section class="settings-section">
-                    <h2>⚙️ Настройки бота</h2>
-                    <form id="config-form">
-                        <div class="form-group">
-                            <label>Название бизнеса</label>
-                            <input type="text" id="business_name" required>
-                        </div>
-
-                        <div class="form-group">
-                            <label>Расписание работы</label>
-                            <input type="text" id="schedule" placeholder="10:00-20:00, пн-сб">
-                        </div>
-
-                        <div class="form-group">
-                            <label>Адрес</label>
-                            <input type="text" id="address">
-                        </div>
-
-                        <div class="form-group">
-                            <label>Телефон</label>
-                            <input type="text" id="phone">
-                        </div>
-
-                        <div class="form-group">
-                            <label>Услуги и цены</label>
-                            <div id="services-list"></div>
-                            <button type="button" onclick="addService()" class="btn-secondary">+ Добавить услугу</button>
-                        </div>
-
-                        <button type="submit" class="btn-primary">Сохранить изменения</button>
-                    </form>
-                </section>
-
-                <!-- Подписка -->
-                <section class="subscription-section">
-                    <h2>💳 Подписка</h2>
-                    <div id="subscription-info" class="subscription-card">
-                        <p class="loading">Загрузка...</p>
-                    </div>
-                </section>
-            </div>
+        <div class="section">
+            <h2>💰 Последние оплаты</h2>
+            <table>
+                <thead><tr><th>Дата</th><th>Telegram ID</th><th>Тариф</th><th>Сумма ⭐</th><th>Статус</th></tr></thead>
+                <tbody id="payments-table"><tr><td colspan="5" class="loading">Загрузка...</td></tr></tbody>
+            </table>
         </div>
     </div>
 
-    <script src="/static/script.js"></script>
     <script>
-        // Колбэк авторизации Telegram
-        function onTelegramAuth(user) {
-            authenticateUser(user);
-        }
+    async function loadData() {
+        try {
+            const [leadsRes, paymentsRes] = await Promise.all([
+                fetch('/api/leads').then(r => r.json()).catch(() => []),
+                fetch('/api/payments').then(r => r.json()).catch(() => [])
+            ]);
+
+            // Cards
+            document.getElementById('leads-count').textContent = leadsRes.length || 0;
+            document.getElementById('payments-count').textContent = paymentsRes.length || 0;
+            const totalStars = paymentsRes.reduce((sum, p) => sum + (p.amount_stars || 0), 0);
+            document.getElementById('revenue').textContent = totalStars.toLocaleString();
+
+            // Leads table
+            const lt = document.getElementById('leads-table');
+            if (leadsRes.length === 0) {
+                lt.innerHTML = '<tr><td colspan="6" style="color:#666">Пока нет лидов</td></tr>';
+            } else {
+                lt.innerHTML = leadsRes.slice(0, 20).map(l => `<tr>
+                    <td>${(l.created_at || '').slice(0, 16)}</td>
+                    <td>${l.name || '—'}</td>
+                    <td>${l.business || '—'}</td>
+                    <td>${l.niche || '—'}</td>
+                    <td>${l.username ? '@' + l.username : l.phone || '—'}</td>
+                    <td><span class="badge ${l.status || 'new'}">${l.status || 'new'}</span></td>
+                </tr>`).join('');
+            }
+
+            // Payments table
+            const pt = document.getElementById('payments-table');
+            if (paymentsRes.length === 0) {
+                pt.innerHTML = '<tr><td colspan="5" style="color:#666">Пока нет оплат</td></tr>';
+            } else {
+                pt.innerHTML = paymentsRes.slice(0, 20).map(p => `<tr>
+                    <td>${(p.created_at || '').slice(0, 16)}</td>
+                    <td>${p.telegram_id}</td>
+                    <td>${p.plan || '—'}</td>
+                    <td>⭐ ${p.amount_stars}</td>
+                    <td><span class="badge ${p.status}">${p.status}</span></td>
+                </tr>`).join('');
+            }
+        } catch(e) { console.error('Load error:', e); }
+    }
+    loadData();
+    setInterval(loadData, 30000);
     </script>
 </body>
 </html>
