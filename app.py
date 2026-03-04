@@ -145,6 +145,7 @@ Rules:
 BOT_TOKEN = os.getenv("ONBOARDING_BOT_TOKEN", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "ai_centers_bot")
 DATABASE_PATH = os.getenv("DATABASE_PATH", "/app/database/ai_centers.db")
+PLATFORM_API_URL = os.getenv("PLATFORM_API_URL", "https://platform-api-production-f313.up.railway.app")
 
 # Telegram Login Widget secret
 TELEGRAM_SECRET = hashlib.sha256(BOT_TOKEN.encode()).digest()
@@ -271,6 +272,70 @@ async def init_db():
                 status TEXT DEFAULT 'completed',
                 payload TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Боты пользователей
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_bots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER,
+                bot_name TEXT,
+                bot_username TEXT,
+                business_name TEXT,
+                niche TEXT,
+                description TEXT,
+                website_url TEXT,
+                services JSON,
+                bot_token TEXT,
+                status TEXT DEFAULT 'creating',
+                platform_bot_id TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (client_id) REFERENCES clients(telegram_id)
+            )
+        """)
+        
+        # Партнёрская программа
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS partners (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER UNIQUE,
+                partner_id TEXT UNIQUE,
+                total_referrals INTEGER DEFAULT 0,
+                active_referrals INTEGER DEFAULT 0,
+                total_earnings REAL DEFAULT 0,
+                balance_to_payout REAL DEFAULT 0,
+                commission_rate REAL DEFAULT 0.20,
+                status TEXT DEFAULT 'active',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Рефералы
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS referrals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                partner_id TEXT,
+                client_id INTEGER,
+                signup_date TEXT DEFAULT CURRENT_TIMESTAMP,
+                first_payment_date TEXT,
+                status TEXT DEFAULT 'pending',
+                lifetime_value REAL DEFAULT 0,
+                FOREIGN KEY (client_id) REFERENCES clients(telegram_id)
+            )
+        """)
+        
+        # Выплаты партнёрам
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS partner_payouts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                partner_id TEXT,
+                amount REAL,
+                status TEXT DEFAULT 'pending',
+                requested_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                paid_at TEXT,
+                payment_method TEXT,
+                transaction_id TEXT
             )
         """)
         
@@ -627,6 +692,409 @@ async def get_payments():
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+# === BOT CREATION API ===
+
+class BotCreationRequest(BaseModel):
+    business_name: str
+    niche: str
+    description: str
+    website_url: Optional[str] = None
+    services: List[Dict[str, str]]
+
+
+class AutoBotRequest(BaseModel):
+    text: str
+    business_type: str
+    language: str = "ru"
+
+
+@app.post("/api/bots/create")
+async def create_bot(bot_request: BotCreationRequest, client_id: int = Depends(get_current_user)):
+    """Создание нового бота через platform-api"""
+    if not client_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # Сохраняем в БД со статусом 'creating'
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """INSERT INTO user_bots (client_id, business_name, niche, description, 
+               website_url, services, status) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                client_id,
+                bot_request.business_name,
+                bot_request.niche,
+                bot_request.description,
+                bot_request.website_url,
+                json.dumps(bot_request.services, ensure_ascii=False),
+                'creating'
+            )
+        )
+        bot_id = cursor.lastrowid
+        await db.commit()
+    
+    # Отправляем запрос на platform-api
+    try:
+        platform_payload = {
+            "business_name": bot_request.business_name,
+            "niche": bot_request.niche,
+            "description": bot_request.description,
+            "website_url": bot_request.website_url,
+            "services": bot_request.services,
+            "client_telegram_id": client_id,
+            "dashboard_bot_id": bot_id
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{PLATFORM_API_URL}/bots/auto-setup",
+                json=platform_payload,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    
+                    # Обновляем статус в БД
+                    async with aiosqlite.connect(DATABASE_PATH) as db:
+                        await db.execute(
+                            """UPDATE user_bots SET status = 'processing', 
+                               platform_bot_id = ? WHERE id = ?""",
+                            (result.get("bot_id"), bot_id)
+                        )
+                        await db.commit()
+                    
+                    return {"bot_id": bot_id, "status": "processing", "platform_result": result}
+                else:
+                    # Обновляем статус как ошибка
+                    async with aiosqlite.connect(DATABASE_PATH) as db:
+                        await db.execute(
+                            "UPDATE user_bots SET status = 'error' WHERE id = ?",
+                            (bot_id,)
+                        )
+                        await db.commit()
+                    
+                    raise HTTPException(status_code=500, detail="Platform API error")
+                    
+    except Exception as e:
+        # Обновляем статус как ошибка
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            await db.execute(
+                "UPDATE user_bots SET status = 'error' WHERE id = ?",
+                (bot_id,)
+            )
+            await db.commit()
+        
+        raise HTTPException(status_code=500, detail=f"Bot creation failed: {str(e)}")
+
+
+@app.post("/api/bots/auto-setup")
+async def auto_setup_bot(auto_request: AutoBotRequest, request: Request):
+    """Проксирует запрос на Platform API для автоматического создания бота"""
+    
+    # Получаем user_id из заголовка X-User-Id
+    user_id = request.headers.get("X-User-Id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing X-User-Id header")
+    
+    try:
+        user_id = int(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid X-User-Id format")
+    
+    # Сохраняем заявку в БД
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """INSERT INTO user_bots (client_id, business_name, niche, description, status) 
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                user_id,
+                "Auto Bot",  # Временное название
+                auto_request.business_type,
+                auto_request.text[:500],  # Обрезаем описание
+                'creating'
+            )
+        )
+        bot_id = cursor.lastrowid
+        await db.commit()
+    
+    # Проксируем запрос на Platform API
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{PLATFORM_API_URL}/bots/auto-setup",
+                json={
+                    "text": auto_request.text,
+                    "business_type": auto_request.business_type,
+                    "language": auto_request.language,
+                    "client_telegram_id": user_id,
+                    "dashboard_bot_id": bot_id
+                },
+                headers={"X-User-Id": str(user_id)},
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    
+                    # Обновляем статус в БД
+                    async with aiosqlite.connect(DATABASE_PATH) as db:
+                        await db.execute(
+                            """UPDATE user_bots SET status = 'processing', 
+                               platform_bot_id = ? WHERE id = ?""",
+                            (result.get("bot_id"), bot_id)
+                        )
+                        await db.commit()
+                    
+                    return {
+                        "success": True, 
+                        "bot_id": bot_id,
+                        "message": "Бот создаётся, это займёт 1-2 минуты",
+                        "platform_result": result
+                    }
+                else:
+                    error_text = await resp.text()
+                    raise HTTPException(status_code=resp.status, detail=f"Platform API error: {error_text}")
+                    
+    except aiohttp.ClientTimeout:
+        # Обновляем статус как ошибка
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            await db.execute(
+                "UPDATE user_bots SET status = 'error' WHERE id = ?",
+                (bot_id,)
+            )
+            await db.commit()
+        
+        raise HTTPException(status_code=504, detail="Platform API timeout")
+    
+    except Exception as e:
+        # Обновляем статус как ошибка
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            await db.execute(
+                "UPDATE user_bots SET status = 'error' WHERE id = ?",
+                (bot_id,)
+            )
+            await db.commit()
+        
+        raise HTTPException(status_code=500, detail=f"Auto setup failed: {str(e)}")
+
+
+@app.get("/api/bots")
+async def get_user_bots(client_id: int = Depends(get_current_user)):
+    """Получение ботов пользователя"""
+    if not client_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM user_bots WHERE client_id = ? ORDER BY created_at DESC",
+            (client_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            
+            bots = []
+            for row in rows:
+                bot_dict = dict(row)
+                if bot_dict['services']:
+                    try:
+                        bot_dict['services'] = json.loads(bot_dict['services'])
+                    except:
+                        bot_dict['services'] = []
+                bots.append(bot_dict)
+            
+            return bots
+
+
+@app.get("/api/bots/{bot_id}/status")
+async def get_bot_status(bot_id: int, client_id: int = Depends(get_current_user)):
+    """Проверка статуса создания бота"""
+    if not client_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with db.execute(
+            "SELECT * FROM user_bots WHERE id = ? AND client_id = ?",
+            (bot_id, client_id)
+        ) as cursor:
+            row = await cursor.fetchone()
+            
+            if not row:
+                raise HTTPException(status_code=404, detail="Bot not found")
+            
+            return {
+                "id": row[0],
+                "status": row[9],  # status column
+                "bot_username": row[2],  # bot_username
+                "platform_bot_id": row[10]  # platform_bot_id
+            }
+
+
+# === PARTNER PROGRAM API ===
+
+@app.get("/api/partner/info")
+async def get_partner_info(client_id: int = Depends(get_current_user)):
+    """Получение информации о партнёре"""
+    if not client_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # Получаем или создаём партнёра
+        async with db.execute(
+            "SELECT * FROM partners WHERE telegram_id = ?",
+            (client_id,)
+        ) as cursor:
+            partner = await cursor.fetchone()
+        
+        if not partner:
+            # Создаём нового партнёра
+            import secrets
+            partner_id = f"P{client_id}_{secrets.token_hex(4).upper()}"
+            
+            await db.execute(
+                """INSERT INTO partners (telegram_id, partner_id) 
+                   VALUES (?, ?)""",
+                (client_id, partner_id)
+            )
+            await db.commit()
+            
+            # Получаем созданного партнёра
+            async with db.execute(
+                "SELECT * FROM partners WHERE telegram_id = ?",
+                (client_id,)
+            ) as cursor:
+                partner = await cursor.fetchone()
+        
+        # Получаем рефералов
+        async with db.execute(
+            """SELECT r.*, c.first_name, c.username 
+               FROM referrals r 
+               LEFT JOIN clients c ON r.client_id = c.telegram_id 
+               WHERE r.partner_id = ?
+               ORDER BY r.signup_date DESC""",
+            (partner[2],)  # partner_id
+        ) as cursor:
+            referrals = await cursor.fetchall()
+        
+        # Рассчитываем комиссию по уровням
+        total_refs = partner[3]  # total_referrals
+        if total_refs >= 21:
+            commission_rate = 0.50
+        elif total_refs >= 6:
+            commission_rate = 0.35
+        else:
+            commission_rate = 0.20
+        
+        # Обновляем ставку комиссии если изменилась
+        if commission_rate != partner[7]:  # commission_rate
+            await db.execute(
+                "UPDATE partners SET commission_rate = ? WHERE telegram_id = ?",
+                (commission_rate, client_id)
+            )
+            await db.commit()
+        
+        return {
+            "partner_id": partner[2],  # partner_id
+            "referral_link": f"https://aicenters.co?ref={partner[2]}",
+            "total_referrals": partner[3],  # total_referrals
+            "active_referrals": partner[4],  # active_referrals
+            "total_earnings": partner[5],  # total_earnings
+            "balance_to_payout": partner[6],  # balance_to_payout
+            "commission_rate": commission_rate,
+            "commission_level": "50%" if total_refs >= 21 else "35%" if total_refs >= 6 else "20%",
+            "referrals": [
+                {
+                    "client_id": r[2],
+                    "client_name": r[9] or f"@{r[10]}" if r[10] else f"User {r[2]}",
+                    "signup_date": r[3],
+                    "first_payment_date": r[4],
+                    "status": r[5],
+                    "lifetime_value": r[6]
+                }
+                for r in referrals
+            ]
+        }
+
+
+@app.post("/api/partner/payout")
+async def request_payout(data: Dict, client_id: int = Depends(get_current_user)):
+    """Запрос выплаты"""
+    if not client_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    amount = data.get("amount", 0)
+    if amount < 50:  # Минимальная выплата $50
+        raise HTTPException(status_code=400, detail="Minimum payout is $50")
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # Проверяем баланс партнёра
+        async with db.execute(
+            "SELECT partner_id, balance_to_payout FROM partners WHERE telegram_id = ?",
+            (client_id,)
+        ) as cursor:
+            partner = await cursor.fetchone()
+        
+        if not partner or partner[1] < amount:
+            raise HTTPException(status_code=400, detail="Insufficient balance")
+        
+        # Создаём заявку на выплату
+        await db.execute(
+            """INSERT INTO partner_payouts (partner_id, amount, payment_method) 
+               VALUES (?, ?, ?)""",
+            (partner[0], amount, data.get("payment_method", "bank"))
+        )
+        
+        # Уменьшаем баланс
+        await db.execute(
+            """UPDATE partners SET balance_to_payout = balance_to_payout - ? 
+               WHERE telegram_id = ?""",
+            (amount, client_id)
+        )
+        
+        await db.commit()
+    
+    # Уведомляем админа о заявке (здесь можно отправить в Telegram)
+    # TODO: send notification to admin
+    
+    return {"status": "requested", "amount": amount}
+
+
+@app.get("/api/partner/payouts")
+async def get_partner_payouts(client_id: int = Depends(get_current_user)):
+    """История выплат партнёра"""
+    if not client_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # Получаем partner_id
+        async with db.execute(
+            "SELECT partner_id FROM partners WHERE telegram_id = ?",
+            (client_id,)
+        ) as cursor:
+            result = await cursor.fetchone()
+            
+            if not result:
+                return []
+        
+        partner_id = result[0]
+        
+        # Получаем выплаты
+        async with db.execute(
+            "SELECT * FROM partner_payouts WHERE partner_id = ? ORDER BY requested_at DESC",
+            (partner_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            
+            return [
+                {
+                    "id": row[0],
+                    "amount": row[2],
+                    "status": row[3],
+                    "requested_at": row[4],
+                    "paid_at": row[5],
+                    "payment_method": row[6]
+                }
+                for row in rows
+            ]
 
 
 if __name__ == "__main__":
